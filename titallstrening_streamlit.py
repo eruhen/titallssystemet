@@ -1,5 +1,5 @@
 
-# Titallstrening – Streamlit (Enter går videre uansett input etter riktig svar)
+# Titallstrening – Streamlit (Enter styrer knappene via JS, uten form/on_change)
 # Kjør med: streamlit run titallstrening_streamlit.py
 import random
 from datetime import datetime, timedelta
@@ -176,17 +176,20 @@ else:
         unsafe_allow_html=True
     )
 
-    # Skjema: Enter submitter uansett om input endret
-    with st.form("answer_form", clear_on_submit=False):
-        st.text_input("Svar (bruk komma eller punktum):", key="answer")
-        submitted = st.form_submit_button("Enter", use_container_width=True)
+    # Skjult flagg i DOM som JS kan lese
+    st.markdown(
+        f"<div id='awaiting-flag' data-await='{1 if st.session_state.awaiting_next else 0}' style='display:none;'></div>",
+        unsafe_allow_html=True
+    )
 
-    if submitted:
-        if st.session_state.awaiting_next:
-            # Enter etter korrekt svar -> kø ny oppgave uansett hva som står i feltet
-            queue_new_task()
-        else:
-            # Sjekk svaret
+    # Svarfelt (ingen on_change / form)
+    st.text_input("Svar (bruk komma eller punktum):", key="answer")
+
+    # Knapper
+    colA, colB = st.columns([1,1])
+    with colA:
+        if st.button("Sjekk svar", type="primary", use_container_width=True, key="check_btn"):
+            # Sjekk svar
             try:
                 u = parse_user(st.session_state['answer'])
                 st.session_state.tried += 1
@@ -205,36 +208,40 @@ else:
             except Exception:
                 st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
                 st.session_state.focus_answer = True
-
-    # Knapper (mus-støtte)
-    colA, colB = st.columns([1,1])
-    with colA:
-        if st.button("Sjekk svar", type="primary", use_container_width=True, key="check_btn"):
-            # Simuler Enter (samme logikk)
-            if st.session_state.awaiting_next:
-                queue_new_task()
-            else:
-                try:
-                    u = parse_user(st.session_state['answer'])
-                    st.session_state.tried += 1
-                    if u == st.session_state.correct:
-                        st.success("Riktig! ✅ (Trykk Enter for ny oppgave)")
-                        st.session_state.correct_count += 1
-                        st.session_state.awaiting_next = True
-                        if st.session_state.mode == "Antall oppgaver":
-                            st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
-                            if st.session_state.remaining == 0:
-                                st.session_state.finished = True
-                        st.session_state.focus_answer = True
-                    else:
-                        st.error(f"Feil. Riktig svar er **{fmt(st.session_state.correct)}**. Prøv igjen.")
-                        st.session_state.focus_answer = True
-                except Exception:
-                    st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
-                    st.session_state.focus_answer = True
     with colB:
         if st.button("Ny oppgave", use_container_width=True, key="new_task_btn"):
             queue_new_task()
+
+    # JS: Enter → klikk riktig knapp
+    components.html(
+        """
+        <script>
+        (function(){
+          const root = window.parent.document;
+          const handler = (e) => {
+            if (e.key === 'Enter') {
+              const awaitingEl = root.querySelector('#awaiting-flag');
+              const awaiting = awaitingEl && awaitingEl.getAttribute('data-await') === '1';
+              const buttons = Array.from(root.querySelectorAll('button'));
+              // Finn riktige knapper etter synlig tekst
+              const findBtn = (txt) => buttons.find(b => (b.innerText || '').trim().toLowerCase() === txt);
+              const checkBtn = findBtn('sjekk svar') || buttons.find(b => (b.innerText || '').toLowerCase().includes('sjekk svar'));
+              const nextBtn  = findBtn('ny oppgave') || buttons.find(b => (b.innerText || '').toLowerCase().includes('ny oppgave'));
+              if (awaiting && nextBtn) {
+                nextBtn.click();
+                e.preventDefault();
+              } else if (!awaiting && checkBtn) {
+                checkBtn.click();
+                e.preventDefault();
+              }
+            }
+          };
+          root.addEventListener('keydown', handler, true);
+        })();
+        </script>
+        """,
+        height=0
+    )
 
 # Fokus ved behov
 if st.session_state.get("focus_answer", False):
