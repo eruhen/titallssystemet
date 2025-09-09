@@ -1,5 +1,5 @@
 
-# Titallstrening – Streamlit (bedre UX: fokus + Enter-logikk)
+# Titallstrening – Streamlit (robust Enter-flyt + trygg statehåndtering)
 # Kjør med: streamlit run titallstrening_streamlit.py
 import random
 from datetime import datetime, timedelta
@@ -51,30 +51,25 @@ def build_new_task():
     st.session_state.task_text = text
     st.session_state.correct = correct
 
-def new_task():
-    if st.session_state.get('finished', False):
-        return
-    build_new_task()
-    st.session_state['answer'] = ""
-    st.session_state['awaiting_next'] = False
-    st.session_state['focus_answer'] = True  # be om fokus
+def queue_new_task():
+    # Sett bare flagg; oppgaven bygges før input tegnes i neste kjøring
+    st.session_state['spawn_new_task'] = True
 
 def reset_session():
     st.session_state.correct_count = 0
     st.session_state.tried = 0
     st.session_state.finished = False
     st.session_state.awaiting_next = False
+    st.session_state.focus_answer = True
     mode = st.session_state.get("mode", "Antall oppgaver")
     if mode == "Antall oppgaver":
         st.session_state.remaining = st.session_state.get("qcount", 20)
-        if "end_time" in st.session_state:
-            del st.session_state["end_time"]
+        st.session_state.pop("end_time", None)
     else:
         minutes = st.session_state.get("minutes", 2)
         st.session_state.end_time = (datetime.utcnow() + timedelta(minutes=minutes)).timestamp()
-        if "remaining" in st.session_state:
-            del st.session_state["remaining"]
-    new_task()
+        st.session_state.pop("remaining", None)
+    queue_new_task()
 
 def time_left_seconds() -> int:
     end_ts = st.session_state.get("end_time", None)
@@ -88,7 +83,6 @@ def format_mmss(seconds: int) -> str:
     return f"{m:02d}:{s:02d}"
 
 def focus_answer_input():
-    # Prøv å fokusere første tekstinput i app-body (ignorér sidebar)
     components.html(
         """
         <script>
@@ -130,13 +124,23 @@ with st.sidebar:
     if st.button("Start/Nullstill økt", key="reset_btn"):
         reset_session()
 
-# Init default state
+# Init default state vars
 for key, default in [
     ("task_text", None), ("answer", ""), ("finished", False),
-    ("correct_count", 0), ("tried", 0), ("awaiting_next", False), ("focus_answer", False)
+    ("correct_count", 0), ("tried", 0), ("awaiting_next", False),
+    ("focus_answer", False), ("spawn_new_task", False)
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
+
+# PROSESSER "spawn_new_task" FØR VI TEGNER INPUT
+if st.session_state.spawn_new_task:
+    build_new_task()
+    st.session_state.answer = ""
+    st.session_state.awaiting_next = False
+    st.session_state.spawn_new_task = False
+    st.session_state.focus_answer = True
+
 if st.session_state.task_text is None:
     build_new_task()
 
@@ -184,8 +188,7 @@ else:
         unsafe_allow_html=True
     )
 
-    # --- Svarfelt i form ---
-    # Enter i form = submit (tolkes som "Sjekk svar" eller "Ny oppgave" hvis awaiting_next)
+    # Svarfelt i form: Enter = submit
     with st.form(key="answer_form", clear_on_submit=False):
         st.text_input("Svar (bruk komma eller punktum):", key="answer")
         submitted = st.form_submit_button(
@@ -193,17 +196,17 @@ else:
             use_container_width=True
         )
 
-    # Be om fokus når ønsket
+    # Fokus etter behov
     if st.session_state.get("focus_answer", False):
         focus_answer_input()
         st.session_state["focus_answer"] = False
 
     if submitted:
         if st.session_state.get("awaiting_next", False):
-            # Enter etter riktig svar -> ny oppgave
-            new_task()
+            # Enter etter riktig svar → kø ny oppgave (ikke sett state på input direkte)
+            queue_new_task()
         else:
-            # Enter = sjekk svar
+            # Enter → sjekk svar
             try:
                 u = parse_user(st.session_state['answer'])
                 st.session_state.tried += 1
@@ -211,26 +214,21 @@ else:
                     st.success("Riktig! ✅ (Trykk Enter for ny oppgave)")
                     st.session_state.correct_count += 1
                     st.session_state.awaiting_next = True
-                    # trekk fra remaining i antall-modus
                     if st.session_state.mode == "Antall oppgaver":
                         st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
                         if st.session_state.remaining == 0:
                             st.session_state.finished = True
-                    # sett fokus slik at Enter→Ny oppgave føles sømløst
                     st.session_state["focus_answer"] = True
                 else:
                     st.error(f"Feil. Riktig svar er **{fmt(st.session_state.correct)}**. Prøv igjen.")
-                    # Behold awaiting_next=False; fokus for ny inntasting
                     st.session_state["focus_answer"] = True
             except Exception:
                 st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
                 st.session_state["focus_answer"] = True
 
-    # Ekstra knapper (valgfritt)
     colA, colB = st.columns([1,1])
     with colA:
         if st.button("Sjekk svar", type="primary", use_container_width=True, key="check_btn"):
-            # Samme logikk som ved Enter
             try:
                 u = parse_user(st.session_state['answer'])
                 st.session_state.tried += 1
@@ -251,6 +249,6 @@ else:
                 st.session_state["focus_answer"] = True
     with colB:
         if st.button("Ny oppgave", use_container_width=True, key="new_task_btn"):
-            new_task()
+            queue_new_task()
 
 st.caption("Desimaltall vises med komma. Du kan skrive svar med komma eller punktum.")
