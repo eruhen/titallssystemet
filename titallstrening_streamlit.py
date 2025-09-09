@@ -1,5 +1,5 @@
 
-# Titallstrening – Streamlit (stabil Enter-flyt med on_change)
+# Titallstrening – Streamlit (Enter går videre uansett input etter riktig svar)
 # Kjør med: streamlit run titallstrening_streamlit.py
 import random
 from datetime import datetime, timedelta
@@ -70,17 +70,6 @@ def reset_session():
         st.session_state.pop("remaining", None)
     queue_new_task()
 
-def time_left_seconds() -> int:
-    end_ts = st.session_state.get("end_time", None)
-    if end_ts is None:
-        return 0
-    return max(0, int(end_ts - datetime.utcnow().timestamp()))
-
-def format_mmss(seconds: int) -> str:
-    m = seconds // 60
-    s = seconds % 60
-    return f"{m:02d}:{s:02d}"
-
 def focus_answer_input():
     components.html(
         """
@@ -98,32 +87,6 @@ def focus_answer_input():
         </script>
         """, height=0
     )
-
-def on_enter():
-    # Kalles når brukeren trykker Enter i svarfeltet
-    if st.session_state.get("awaiting_next", False):
-        # Etter riktig svar: lag ny oppgave
-        queue_new_task()
-        return
-    # Ellers: sjekk svaret
-    try:
-        u = parse_user(st.session_state['answer'])
-        st.session_state.tried += 1
-        if u == st.session_state.correct:
-            st.success("Riktig! ✅ (Trykk Enter for ny oppgave)")
-            st.session_state.correct_count += 1
-            st.session_state.awaiting_next = True
-            if st.session_state.mode == "Antall oppgaver":
-                st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
-                if st.session_state.remaining == 0:
-                    st.session_state.finished = True
-            st.session_state["focus_answer"] = True
-        else:
-            st.error(f"Feil. Riktig svar er **{fmt(st.session_state.correct)}**. Prøv igjen.")
-            st.session_state["focus_answer"] = True
-    except Exception:
-        st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
-        st.session_state["focus_answer"] = True
 
 st.set_page_config(page_title="Titallstrening", page_icon="🧮")
 st.title("Titallstrening – 10, 100, 1000")
@@ -158,7 +121,7 @@ for key, default in [
     if key not in st.session_state:
         st.session_state[key] = default
 
-# Prosesser køet ny oppgave før UI
+# Prosesser ny oppgave før UI
 if st.session_state.spawn_new_task:
     build_new_task()
     st.session_state.answer = ""
@@ -179,7 +142,6 @@ with col3:
     if st.session_state.mode == "Antall oppgaver":
         st.metric("Igjen", st.session_state.get("remaining", 0))
     else:
-        # Tidsmodus
         end_ts = st.session_state.get("end_time", None)
         tl = max(0, int(end_ts - datetime.utcnow().timestamp())) if end_ts else 0
         m, s = divmod(tl, 60)
@@ -187,7 +149,7 @@ with col3:
 
 st.divider()
 
-# Slutt ved tid/antall
+# Avslutt ved tid/antall
 if st.session_state.mode == "Tid":
     end_ts = st.session_state.get("end_time", None)
     if end_ts is not None and datetime.utcnow().timestamp() >= end_ts:
@@ -208,20 +170,68 @@ if st.session_state.get("finished", False) or (
     st.button("Start ny økt", type="primary", on_click=reset_session, use_container_width=True)
 
 else:
-    # Stor oppgavetekst
+    # Oppgavetekst
     st.markdown(
         f"<div style='font-size:34px; font-weight:700; margin: 10px 0 20px 0;'>{st.session_state.task_text}</div>",
         unsafe_allow_html=True
     )
 
-    # Svarfelt med on_change: Enter => on_enter()
-    st.text_input("Svar (bruk komma eller punktum):", key="answer", on_change=on_enter)
+    # Skjema: Enter submitter uansett om input endret
+    with st.form("answer_form", clear_on_submit=False):
+        st.text_input("Svar (bruk komma eller punktum):", key="answer")
+        submitted = st.form_submit_button("Enter", use_container_width=True)
 
-    # Knapper (backup for mus)
+    if submitted:
+        if st.session_state.awaiting_next:
+            # Enter etter korrekt svar -> kø ny oppgave uansett hva som står i feltet
+            queue_new_task()
+        else:
+            # Sjekk svaret
+            try:
+                u = parse_user(st.session_state['answer'])
+                st.session_state.tried += 1
+                if u == st.session_state.correct:
+                    st.success("Riktig! ✅ (Trykk Enter for ny oppgave)")
+                    st.session_state.correct_count += 1
+                    st.session_state.awaiting_next = True
+                    if st.session_state.mode == "Antall oppgaver":
+                        st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
+                        if st.session_state.remaining == 0:
+                            st.session_state.finished = True
+                    st.session_state.focus_answer = True
+                else:
+                    st.error(f"Feil. Riktig svar er **{fmt(st.session_state.correct)}**. Prøv igjen.")
+                    st.session_state.focus_answer = True
+            except Exception:
+                st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
+                st.session_state.focus_answer = True
+
+    # Knapper (mus-støtte)
     colA, colB = st.columns([1,1])
     with colA:
         if st.button("Sjekk svar", type="primary", use_container_width=True, key="check_btn"):
-            on_enter()  # gjenbruk samme logikk
+            # Simuler Enter (samme logikk)
+            if st.session_state.awaiting_next:
+                queue_new_task()
+            else:
+                try:
+                    u = parse_user(st.session_state['answer'])
+                    st.session_state.tried += 1
+                    if u == st.session_state.correct:
+                        st.success("Riktig! ✅ (Trykk Enter for ny oppgave)")
+                        st.session_state.correct_count += 1
+                        st.session_state.awaiting_next = True
+                        if st.session_state.mode == "Antall oppgaver":
+                            st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
+                            if st.session_state.remaining == 0:
+                                st.session_state.finished = True
+                        st.session_state.focus_answer = True
+                    else:
+                        st.error(f"Feil. Riktig svar er **{fmt(st.session_state.correct)}**. Prøv igjen.")
+                        st.session_state.focus_answer = True
+                except Exception:
+                    st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
+                    st.session_state.focus_answer = True
     with colB:
         if st.button("Ny oppgave", use_container_width=True, key="new_task_btn"):
             queue_new_task()
