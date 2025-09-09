@@ -1,6 +1,6 @@
 
-# Titallstrening – Streamlit (stabil Enter: 1 Enter for sjekk + automatisk ny oppgave ved riktig)
-# Kjør med: streamlit run titallstrening_streamlit.py
+# Titallstrening – Streamlit (stabil Enter uten form/JS: on_change + auto-ny oppgave ved riktig)
+# Kjør: streamlit run titallstrening_streamlit.py
 import random
 from datetime import datetime, timedelta
 import streamlit as st
@@ -88,6 +88,30 @@ def focus_answer_input():
         """, height=0
     )
 
+def submit_answer():
+    # Kalles automatisk når innholdet i tekstfeltet endres og elev trykker Enter.
+    s = st.session_state.get('answer', '')
+    try:
+        u = parse_user(s)
+    except Exception:
+        st.session_state.last_feedback = "parse_error"
+        st.session_state.focus_answer = True
+        return
+
+    st.session_state.tried += 1
+    if u == st.session_state.correct:
+        st.session_state.correct_count += 1
+        st.session_state.last_feedback = "correct"
+        if st.session_state.get("mode","Antall oppgaver") == "Antall oppgaver":
+            st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
+            if st.session_state.remaining == 0:
+                st.session_state.finished = True
+        # Auto: kø ny oppgave ved riktig svar
+        queue_new_task()
+    else:
+        st.session_state.last_feedback = "wrong"
+        st.session_state.focus_answer = True
+
 st.set_page_config(page_title="Titallstrening", page_icon="🧮")
 st.title("Titallstrening – 10, 100, 1000")
 
@@ -169,11 +193,13 @@ if st.session_state.get("finished", False) or (
     st.button("Start ny økt", type="primary", on_click=reset_session, use_container_width=True)
 
 else:
-    # Vis forrige tilbakemelding (dersom ønskelig)
+    # Sist tilbakemelding
     if st.session_state.last_feedback == "correct":
         st.success("Riktig! ✅")
     elif st.session_state.last_feedback == "wrong":
         st.error("Feil. Prøv igjen.")
+    elif st.session_state.last_feedback == "parse_error":
+        st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
 
     # Oppgavetekst
     st.markdown(
@@ -181,60 +207,17 @@ else:
         unsafe_allow_html=True
     )
 
-    # Svarfelt uten on_change/form
-    st.text_input("Svar (bruk komma eller punktum):", key="answer")
+    # Svarfelt: Enter (on_change) = sjekk svar. Ved riktig -> auto ny oppgave.
+    st.text_input("Svar (bruk komma eller punktum):", key="answer", on_change=submit_answer)
 
-    # Knapper
-    def check_answer():
-        try:
-            u = parse_user(st.session_state['answer'])
-        except Exception:
-            st.session_state.last_feedback = "parse_error"
-            st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
-            st.session_state.focus_answer = True
-            return
-
-        st.session_state.tried += 1
-        if u == st.session_state.correct:
-            st.session_state.correct_count += 1
-            st.session_state.last_feedback = "correct"
-            if st.session_state.mode == "Antall oppgaver":
-                st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
-                if st.session_state.remaining == 0:
-                    st.session_state.finished = True
-            # Automatisk ny oppgave ved riktig svar
-            queue_new_task()
-        else:
-            st.session_state.last_feedback = "wrong"
-            st.session_state.focus_answer = True
-
+    # Knapper (mus-støtte)
     colA, colB = st.columns([1,1])
     with colA:
         if st.button("Sjekk svar", type="primary", use_container_width=True, key="check_btn"):
-            check_answer()
+            submit_answer()
     with colB:
         if st.button("Ny oppgave", use_container_width=True, key="new_task_btn"):
             queue_new_task()
-
-    # Enter -> trykk "Sjekk svar" (kun én handling)
-    components.html(
-        """
-        <script>
-        (function(){
-          const root = window.parent.document;
-          const handler = (e) => {
-            if (e.key === 'Enter') {
-              const buttons = Array.from(root.querySelectorAll('button'));
-              const checkBtn = buttons.find(b => (b.innerText || '').toLowerCase().includes('sjekk svar'));
-              if (checkBtn) { checkBtn.click(); e.preventDefault(); }
-            }
-          };
-          root.addEventListener('keydown', handler, true);
-        })();
-        </script>
-        """,
-        height=0
-    )
 
 # Fokus
 if st.session_state.get("focus_answer", False):
