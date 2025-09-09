@@ -1,5 +1,5 @@
 
-# Titallstrening – Streamlit (robust Enter-flyt + trygg statehåndtering)
+# Titallstrening – Streamlit (stabil Enter-flyt med on_change)
 # Kjør med: streamlit run titallstrening_streamlit.py
 import random
 from datetime import datetime, timedelta
@@ -52,7 +52,6 @@ def build_new_task():
     st.session_state.correct = correct
 
 def queue_new_task():
-    # Sett bare flagg; oppgaven bygges før input tegnes i neste kjøring
     st.session_state['spawn_new_task'] = True
 
 def reset_session():
@@ -100,6 +99,32 @@ def focus_answer_input():
         """, height=0
     )
 
+def on_enter():
+    # Kalles når brukeren trykker Enter i svarfeltet
+    if st.session_state.get("awaiting_next", False):
+        # Etter riktig svar: lag ny oppgave
+        queue_new_task()
+        return
+    # Ellers: sjekk svaret
+    try:
+        u = parse_user(st.session_state['answer'])
+        st.session_state.tried += 1
+        if u == st.session_state.correct:
+            st.success("Riktig! ✅ (Trykk Enter for ny oppgave)")
+            st.session_state.correct_count += 1
+            st.session_state.awaiting_next = True
+            if st.session_state.mode == "Antall oppgaver":
+                st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
+                if st.session_state.remaining == 0:
+                    st.session_state.finished = True
+            st.session_state["focus_answer"] = True
+        else:
+            st.error(f"Feil. Riktig svar er **{fmt(st.session_state.correct)}**. Prøv igjen.")
+            st.session_state["focus_answer"] = True
+    except Exception:
+        st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
+        st.session_state["focus_answer"] = True
+
 st.set_page_config(page_title="Titallstrening", page_icon="🧮")
 st.title("Titallstrening – 10, 100, 1000")
 
@@ -124,7 +149,7 @@ with st.sidebar:
     if st.button("Start/Nullstill økt", key="reset_btn"):
         reset_session()
 
-# Init default state vars
+# Init defaults
 for key, default in [
     ("task_text", None), ("answer", ""), ("finished", False),
     ("correct_count", 0), ("tried", 0), ("awaiting_next", False),
@@ -133,7 +158,7 @@ for key, default in [
     if key not in st.session_state:
         st.session_state[key] = default
 
-# PROSESSER "spawn_new_task" FØR VI TEGNER INPUT
+# Prosesser køet ny oppgave før UI
 if st.session_state.spawn_new_task:
     build_new_task()
     st.session_state.answer = ""
@@ -150,21 +175,24 @@ with col1:
     st.metric("Riktige", st.session_state.get("correct_count", 0))
 with col2:
     st.metric("Forsøkt", st.session_state.get("tried", 0))
-
 with col3:
     if st.session_state.mode == "Antall oppgaver":
         st.metric("Igjen", st.session_state.get("remaining", 0))
     else:
-        tl = time_left_seconds()
-        st.metric("Tid igjen", format_mmss(tl))
+        # Tidsmodus
+        end_ts = st.session_state.get("end_time", None)
+        tl = max(0, int(end_ts - datetime.utcnow().timestamp())) if end_ts else 0
+        m, s = divmod(tl, 60)
+        st.metric("Tid igjen", f"{m:02d}:{s:02d}")
 
 st.divider()
 
-# Tidsmodus: sjekk om ferdig
-if st.session_state.mode == "Tid" and time_left_seconds() <= 0:
-    st.session_state.finished = True
+# Slutt ved tid/antall
+if st.session_state.mode == "Tid":
+    end_ts = st.session_state.get("end_time", None)
+    if end_ts is not None and datetime.utcnow().timestamp() >= end_ts:
+        st.session_state.finished = True
 
-# Slutt på økt?
 if st.session_state.get("finished", False) or (
     st.session_state.mode == "Antall oppgaver" and st.session_state.get("remaining", 0) == 0
 ):
@@ -172,13 +200,11 @@ if st.session_state.get("finished", False) or (
     tried = st.session_state.get("tried", 0)
     correct = st.session_state.get("correct_count", 0)
     pct = int(round((100*correct/tried),0)) if tried else 0
-
     if tried > 0 and correct == tried:
         st.balloons()
         st.success(f"🎉 Perfekt økt! {correct} av {tried} (100%).")
     else:
         st.success(f"Økten er ferdig. Resultat: {correct} riktige av {tried} (≈ {pct}%).")
-
     st.button("Start ny økt", type="primary", on_click=reset_session, use_container_width=True)
 
 else:
@@ -188,67 +214,21 @@ else:
         unsafe_allow_html=True
     )
 
-    # Svarfelt i form: Enter = submit
-    with st.form(key="answer_form", clear_on_submit=False):
-        st.text_input("Svar (bruk komma eller punktum):", key="answer")
-        submitted = st.form_submit_button(
-            "Enter = Sjekk svar (eller Ny oppgave hvis riktig)",
-            use_container_width=True
-        )
+    # Svarfelt med on_change: Enter => on_enter()
+    st.text_input("Svar (bruk komma eller punktum):", key="answer", on_change=on_enter)
 
-    # Fokus etter behov
-    if st.session_state.get("focus_answer", False):
-        focus_answer_input()
-        st.session_state["focus_answer"] = False
-
-    if submitted:
-        if st.session_state.get("awaiting_next", False):
-            # Enter etter riktig svar → kø ny oppgave (ikke sett state på input direkte)
-            queue_new_task()
-        else:
-            # Enter → sjekk svar
-            try:
-                u = parse_user(st.session_state['answer'])
-                st.session_state.tried += 1
-                if u == st.session_state.correct:
-                    st.success("Riktig! ✅ (Trykk Enter for ny oppgave)")
-                    st.session_state.correct_count += 1
-                    st.session_state.awaiting_next = True
-                    if st.session_state.mode == "Antall oppgaver":
-                        st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
-                        if st.session_state.remaining == 0:
-                            st.session_state.finished = True
-                    st.session_state["focus_answer"] = True
-                else:
-                    st.error(f"Feil. Riktig svar er **{fmt(st.session_state.correct)}**. Prøv igjen.")
-                    st.session_state["focus_answer"] = True
-            except Exception:
-                st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
-                st.session_state["focus_answer"] = True
-
+    # Knapper (backup for mus)
     colA, colB = st.columns([1,1])
     with colA:
         if st.button("Sjekk svar", type="primary", use_container_width=True, key="check_btn"):
-            try:
-                u = parse_user(st.session_state['answer'])
-                st.session_state.tried += 1
-                if u == st.session_state.correct:
-                    st.success("Riktig! ✅ (Trykk Enter for ny oppgave)")
-                    st.session_state.correct_count += 1
-                    st.session_state.awaiting_next = True
-                    if st.session_state.mode == "Antall oppgaver":
-                        st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
-                        if st.session_state.remaining == 0:
-                            st.session_state.finished = True
-                    st.session_state["focus_answer"] = True
-                else:
-                    st.error(f"Feil. Riktig svar er **{fmt(st.session_state.correct)}**. Prøv igjen.")
-                    st.session_state["focus_answer"] = True
-            except Exception:
-                st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
-                st.session_state["focus_answer"] = True
+            on_enter()  # gjenbruk samme logikk
     with colB:
         if st.button("Ny oppgave", use_container_width=True, key="new_task_btn"):
             queue_new_task()
+
+# Fokus ved behov
+if st.session_state.get("focus_answer", False):
+    focus_answer_input()
+    st.session_state["focus_answer"] = False
 
 st.caption("Desimaltall vises med komma. Du kan skrive svar med komma eller punktum.")
