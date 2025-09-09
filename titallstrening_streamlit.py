@@ -1,6 +1,9 @@
-# Titallstrening – Streamlit (økt-slutt-logikk)
+
+# Titallstrening – Streamlit (økt-slutt + feiring + tidsmodus)
 # Kjør med: streamlit run titallstrening_streamlit.py
 import random
+import time
+from datetime import datetime, timedelta
 import streamlit as st
 from decimal import Decimal, getcontext
 
@@ -49,68 +52,101 @@ def build_new_task():
     st.session_state.correct = correct
 
 def new_task():
-    # Ikke lag ny oppgave hvis økten er ferdig
     if st.session_state.get('finished', False):
         return
     build_new_task()
-    st.session_state['answer'] = ""  # clear input
+    st.session_state['answer'] = ""
 
 def reset_session():
     st.session_state.correct_count = 0
     st.session_state.tried = 0
-    st.session_state.remaining = st.session_state.get("qcount", 20)
     st.session_state.finished = False
+    mode = st.session_state.get("mode", "Antall oppgaver")
+    if mode == "Antall oppgaver":
+        st.session_state.remaining = st.session_state.get("qcount", 20)
+    else:
+        minutes = st.session_state.get("minutes", 2)
+        st.session_state.end_time = (datetime.utcnow() + timedelta(minutes=minutes)).timestamp()
     new_task()
+
+def time_left_seconds() -> int:
+    end_ts = st.session_state.get("end_time", None)
+    if end_ts is None:
+        return 0
+    return max(0, int(end_ts - datetime.utcnow().timestamp()))
+
+def format_mmss(seconds: int) -> str:
+    m = seconds // 60
+    s = seconds % 60
+    return f"{m:02d}:{s:02d}"
 
 st.set_page_config(page_title="Titallstrening", page_icon="🧮")
 st.title("Titallstrening – 10, 100, 1000")
 
 with st.sidebar:
     st.header("Innstillinger")
+    st.session_state.mode = st.selectbox("Øktmodus", ["Antall oppgaver", "Tid"], index=0)
     ops = st.multiselect("Operasjon", ["Gange (·)","Dele (:)"], default=["Gange (·)","Dele (:)"], key="ops_sel")
     st.session_state.ops = ['*' if o.startswith("Gange") else '/' for o in ops] or ['*','/']
     factors = st.multiselect("Faktorer", ["10","100","1000"], default=["10","100","1000"], key="fac_sel")
     st.session_state.factors = [Decimal(f) for f in factors] or FACTORS
     st.session_state.difficulty = st.selectbox("Talltype", ["Hele tall","Desimaltall","Blandet"], index=2, key="diff_sel")
-    qcount = st.number_input("Antall oppgaver i økt", min_value=1, max_value=200, value=20, step=1, key="qcount")
-    if "remaining" not in st.session_state:
-        st.session_state.remaining = qcount
+
+    if st.session_state.mode == "Antall oppgaver":
+        qcount = st.number_input("Antall oppgaver i økt", min_value=1, max_value=200, value=20, step=1, key="qcount")
+        if "remaining" not in st.session_state:
+            st.session_state.remaining = qcount
+    else:
+        minutes = st.number_input("Varighet (minutter)", min_value=1, max_value=60, value=2, step=1, key="minutes")
+        if "end_time" not in st.session_state:
+            st.session_state.end_time = (datetime.utcnow() + timedelta(minutes=minutes)).timestamp()
+
     if st.button("Start/Nullstill økt", key="reset_btn"):
         reset_session()
 
-# Init first task and input key
 if "task_text" not in st.session_state:
     build_new_task()
 if "answer" not in st.session_state:
     st.session_state['answer'] = ""
-if "finished" not in st.session_state:
-    st.session_state.finished = False
-if "correct_count" not in st.session_state:
-    st.session_state.correct_count = 0
-if "tried" not in st.session_state:
-    st.session_state.tried = 0
+for key, default in [("finished", False), ("correct_count", 0), ("tried", 0)]:
+    if key not in st.session_state:
+        st.session_state[key] = default
+if st.session_state.get("mode", "Antall oppgaver") == "Antall oppgaver" and "remaining" not in st.session_state:
+    st.session_state.remaining = st.session_state.get("qcount", 20)
 
-# Header metrics
 col1, col2, col3 = st.columns(3)
 with col1:
     st.metric("Riktige", st.session_state.get("correct_count", 0))
 with col2:
     st.metric("Forsøkt", st.session_state.get("tried", 0))
+
 with col3:
-    st.metric("Igjen", st.session_state.get("remaining", 0))
+    if st.session_state.mode == "Antall oppgaver":
+        st.metric("Igjen", st.session_state.get("remaining", 0))
+    else:
+        tl = time_left_seconds()
+        st.metric("Tid igjen", format_mmss(tl))
 
 st.divider()
 
-# Hvis økten er ferdig: vis oppsummering og restart-knapp
-if st.session_state.get("finished", False) or st.session_state.get("remaining", 0) == 0:
+if st.session_state.mode == "Tid" and time_left_seconds() <= 0:
+    st.session_state.finished = True
+
+if st.session_state.get("finished", False) or (st.session_state.mode == "Antall oppgaver" and st.session_state.get("remaining", 0) == 0):
     st.session_state.finished = True
     tried = st.session_state.get("tried", 0)
     correct = st.session_state.get("correct_count", 0)
     pct = int(round((100*correct/tried),0)) if tried else 0
-    st.success(f"🎉 Økten er ferdig! Resultat: {correct} riktige av {tried} (≈ {pct}%).")
+
+    if tried > 0 and correct == tried:
+        st.balloons()
+        st.success(f"🎉 Perfekt økt! {correct} av {tried} (100%).")
+    else:
+        st.success(f"Økten er ferdig. Resultat: {correct} riktige av {tried} (≈ {pct}%).")
+
     st.button("Start ny økt", type="primary", on_click=reset_session, use_container_width=True)
+
 else:
-    # Big task text
     st.markdown(
         f"<div style='font-size:34px; font-weight:700; margin: 10px 0 20px 0;'>{st.session_state.task_text}</div>",
         unsafe_allow_html=True
@@ -129,9 +165,10 @@ else:
                     st.session_state.correct_count = st.session_state.get("correct_count", 0) + 1
                 else:
                     st.error(f"Feil. Riktig svar: **{fmt(st.session_state.correct)}**")
-                st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
-                if st.session_state.remaining == 0:
-                    st.session_state.finished = True
+                if st.session_state.mode == "Antall oppgaver":
+                    st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
+                    if st.session_state.remaining == 0:
+                        st.session_state.finished = True
             except Exception:
                 st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
     with colB:
