@@ -243,9 +243,9 @@ if st.session_state.get("finished", False) or (
 
 else:
     if st.session_state.last_feedback == "correct":
-        st.success("Riktig! ✅")
+        st.success("Ritkig! ✅")
     elif st.session_state.last_feedback == "wrong":
-        st.error("Feil. Prøv igjen.")
+        st.error("Feil. Prov igjen.")
     elif st.session_state.last_feedback == "parse_error":
         st.warning("Kunne ikke tolke svaret. Bruk tall med komma eller punktum.")
 
