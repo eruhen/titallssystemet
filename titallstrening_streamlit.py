@@ -1,4 +1,4 @@
-# Titallstrening – Streamlit (fix: suppress on_change after programmatic clears)
+# Titallstrening – Streamlit (stabil submit med form)
 # Kjør: streamlit run titallstrening_streamlit.py
 
 import random
@@ -48,7 +48,7 @@ def random_number(difficulty: str) -> Decimal:
 
 def build_new_task():
     a = random_number(st.session_state.difficulty)
-    op = random.choice(st.session_state.ops)  # '*' or '/'
+    op = random.choice(st.session_state.ops)
     f = random.choice(st.session_state.factors)
 
     if op == "*":
@@ -62,16 +62,12 @@ def build_new_task():
     st.session_state.correct = correct
 
 
-def queue_new_task():
-    st.session_state["spawn_new_task"] = True
-
-
 def reset_session():
     st.session_state.correct_count = 0
     st.session_state.tried = 0
     st.session_state.finished = False
     st.session_state.last_feedback = None
-    st.session_state.focus_answer = True
+    st.session_state.answer = ""
 
     mode = st.session_state.get("mode", "Antall oppgaver")
     if mode == "Antall oppgaver":
@@ -82,7 +78,7 @@ def reset_session():
         st.session_state.end_time = (datetime.utcnow() + timedelta(minutes=minutes)).timestamp()
         st.session_state.pop("remaining", None)
 
-    queue_new_task()
+    build_new_task()
 
 
 def focus_answer_input():
@@ -98,25 +94,18 @@ def focus_answer_input():
             inputs[0].select && inputs[0].select();
           }
         };
-        setTimeout(tryFocus, 50);
+        setTimeout(tryFocus, 80);
         </script>
         """,
         height=0,
     )
 
 
-def submit_answer():
-    # Ignorer on_change som skyldes at programmet selv tømmer feltet
-    if st.session_state.get("ignore_change", False):
-        st.session_state["ignore_change"] = False
-        return
-
-    s = st.session_state.get("answer", "")
+def submit_answer(user_text: str):
     try:
-        u = parse_user(s)
+        u = parse_user(user_text)
     except Exception:
         st.session_state.last_feedback = "parse_error"
-        st.session_state.focus_answer = True
         return
 
     st.session_state.tried += 1
@@ -129,11 +118,15 @@ def submit_answer():
             st.session_state.remaining = max(0, st.session_state.get("remaining", 0) - 1)
             if st.session_state.remaining == 0:
                 st.session_state.finished = True
+            else:
+                build_new_task()
+        else:
+            build_new_task()
 
-        queue_new_task()
+        st.session_state.answer = ""
+        st.rerun()
     else:
         st.session_state.last_feedback = "wrong"
-        st.session_state.focus_answer = True
 
 
 st.set_page_config(page_title="Titallstrening", page_icon="🧮")
@@ -192,9 +185,9 @@ with st.sidebar:
 
     if st.button("Start/Nullstill økt", key="reset_btn"):
         reset_session()
+        st.rerun()
 
 
-# Init defaults
 for key, default in [
     ("task_text", None),
     ("answer", ""),
@@ -202,30 +195,14 @@ for key, default in [
     ("correct_count", 0),
     ("tried", 0),
     ("last_feedback", None),
-    ("focus_answer", False),
-    ("spawn_new_task", False),
-    ("ignore_change", False),
 ]:
     if key not in st.session_state:
         st.session_state[key] = default
 
-
-# Prosesser ny oppgave før UI
-if st.session_state.spawn_new_task:
-    build_new_task()
-    st.session_state["ignore_change"] = True
-    st.session_state.answer = ""
-    st.session_state.spawn_new_task = False
-    st.session_state.focus_answer = True
-
-
 if st.session_state.task_text is None:
     build_new_task()
 
-
-# Header metrics
 col1, col2, col3 = st.columns(3)
-
 with col1:
     st.metric("Riktige", st.session_state.get("correct_count", 0))
 with col2:
@@ -241,8 +218,6 @@ with col3:
 
 st.divider()
 
-
-# Avslutt ved tid/antall
 if st.session_state.mode == "Tid":
     end_ts = st.session_state.get("end_time", None)
     if end_ts is not None and datetime.utcnow().timestamp() >= end_ts:
@@ -262,7 +237,9 @@ if st.session_state.get("finished", False) or (
     else:
         st.success(f"Økten er ferdig. Resultat: {correct} riktige av {tried} (≈ {pct}%).")
 
-    st.button("Start ny økt", type="primary", on_click=reset_session, use_container_width=True)
+    if st.button("Start ny økt", type="primary", use_container_width=True):
+        reset_session()
+        st.rerun()
 
 else:
     if st.session_state.last_feedback == "correct":
@@ -277,20 +254,20 @@ else:
         unsafe_allow_html=True,
     )
 
-    st.text_input("Svar (bruk komma eller punktum):", key="answer", on_change=submit_answer)
+    with st.form("answer_form", clear_on_submit=False):
+        user_answer = st.text_input("Svar (bruk komma eller punktum):", key="answer")
+        submitted = st.form_submit_button("Sjekk svar", use_container_width=True)
 
     colA, colB = st.columns([1, 1])
     with colA:
-        if st.button("Sjekk svar", type="primary", use_container_width=True, key="check_btn"):
-            submit_answer()
+        if submitted:
+            submit_answer(user_answer)
     with colB:
         if st.button("Ny oppgave", use_container_width=True, key="new_task_btn"):
-            queue_new_task()
+            build_new_task()
+            st.session_state.answer = ""
+            st.rerun()
 
-
-# Fokus
-if st.session_state.get("focus_answer", False):
     focus_answer_input()
-    st.session_state["focus_answer"] = False
 
 st.caption("Desimaltall vises med komma. Du kan skrive svar med komma eller punktum.")
